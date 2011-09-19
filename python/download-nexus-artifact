@@ -1,0 +1,101 @@
+#!/usr/bin/env python
+import feedparser
+import string
+import re
+import urllib2
+from lxml import etree
+import sys
+import getopt
+
+class Artifact:
+  def __init__(self, arr, url):
+    self.groupId = arr[0]
+    self.artifactId = arr[1]
+    self.version = arr[2]
+    self.url = url
+    self.extension = None
+
+  def __repr__(self):
+    return """
+	"groupId": %s, 
+	"artifactId": %s, 
+	"version": %s,
+	"snapshot" %s,
+ 	"url" : %s 
+	""" % (self.groupId, self.artifactId, self.version, self.isSnapshot(), self.url)
+  
+  def isSnapshot(self):    
+    return self.url.find("SNAPSHOT") != -1
+
+  def download(self, filename = None):
+    ex = self.getExtension()
+    if filename == None:
+      filename = self.artifactId + "." + ex
+    url = self.url.replace(".pom", "." + ex)
+    with open(filename, 'w') as f:
+      response = urllib2.urlopen(url)
+      f.write(response.read())
+    print("Downloaded %s to %s" % (url, f.name))
+
+
+  def getExtension(self):
+    if self.extension == None:
+      xml = etree.parse(self.url)
+      p = xml.xpath("/m:project/m:packaging/text()", namespaces={'m': 'http://maven.apache.org/POM/4.0.0'})
+      if p == None or p == []:
+        self.extension = "jar"
+      else:
+        self.extension = p[0]
+    return self.extension
+
+def main(args = None):
+  try:
+    opts, args = getopt.getopt(sys.argv[1:], "f:", ["file="])
+  except getopt.GetoptError, err:
+    # print help information and exit:
+    print str(err) # will print something like "option -a not recognized"
+    usage()
+    sys.exit(2)
+
+  if len(args) == 0:
+   print "You need to select a usable artifact"
+   usage()
+   sys.exit(2) 
+
+  if len(args) == 2:
+    args.append(None)
+
+  options = dict(opts)
+
+  selected = Artifact(args, None)
+
+  nexus_feed = "http://nexus.example.org/service/local/feeds/recentlyDeployedArtifacts"
+  feed = feedparser.parse(nexus_feed)
+
+  artifacts = map(lambda i: Artifact(string.split(i.title, ":"), i.link), feed['items'])
+  filtered = filter(lambda a: a.groupId == selected.groupId and a.artifactId == selected.artifactId, artifacts)
+
+
+  if len(filtered) > 1:
+    filtered[0].download(options.get('-f'))
+    sys.exit(0)
+  else:
+    print "No interesting artifacts found"
+    sys.exit(1)
+
+
+def usage():
+  print """
+   Usage;
+   download-artifact <options> <arguments>
+   options:
+     -f --file=<filename>
+     
+   arguments:
+    <groupId>
+    <artifactId>
+    <version> (optional)
+  """
+
+if __name__ == '__main__':
+  main()
