@@ -1,0 +1,2 @@
+#!/bin/bash
+egrep -l 'ERROR|FAIL' target/sure*/*.txt | xargs less
