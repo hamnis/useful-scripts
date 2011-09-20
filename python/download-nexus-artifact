@@ -6,6 +6,7 @@ import urllib2
 from lxml import etree
 import sys
 import getopt
+import os
 
 class Artifact:
   def __init__(self, arr, url):
@@ -27,16 +28,42 @@ class Artifact:
   def isSnapshot(self):    
     return self.url.find("SNAPSHOT") != -1
 
-  def download(self, filename = None):
-    ex = self.getExtension()
-    if filename == None:
-      filename = self.artifactId + "." + ex
-    url = self.url.replace(".pom", "." + ex)
-    with open(filename, 'w') as f:
-      response = urllib2.urlopen(url)
-      f.write(response.read())
-    print("Downloaded %s to %s" % (url, f.name))
+  def download(self, workDir, filename = None):    
+    downloaded = self.isDownloaded(workDir)
+    
+    if not downloaded:
+      ex = self.getExtension()
+      if filename == None:
+        filename = self.artifactId + "." + ex
 
+      url = self.url.replace(".pom", "." + ex)
+      with open(filename, 'w') as f:
+        response = urllib2.urlopen(url)
+        f.write(response.read())
+      self.saveDownloaded(workDir)
+      print("Downloaded %s to %s" % (url, f.name))
+    else:
+      print("Already downloaded the latest artifact")
+
+
+  def isDownloaded(self, workDir):
+    filename = self.versionFilename(workDir)
+    if os.path.exists(filename):
+      with open(filename, 'r') as f:
+        l = f.read().strip()
+        if self.version == l:
+          return True
+
+    return False
+
+  def saveDownloaded(self, workDir):
+    with open(self.versionFilename(workDir), 'w') as f:
+      f.write(self.version)
+
+  def versionFilename(self, workDir = None):
+    if workDir == None:
+      workDir = ""
+    return str(workDir + self.artifactId + ".version")
 
   def getExtension(self):
     if self.extension == None:
@@ -50,7 +77,7 @@ class Artifact:
 
 def main(args = None):
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "f:", ["file="])
+    opts, args = getopt.getopt(sys.argv[1:], "f:w:", ["file=", "work-dir="])
   except getopt.GetoptError, err:
     # print help information and exit:
     print str(err) # will print something like "option -a not recognized"
@@ -69,15 +96,16 @@ def main(args = None):
 
   selected = Artifact(args, None)
 
-  nexus_feed = "http://nexus.example.org/service/local/feeds/recentlyDeployedArtifacts"
+  nexus_feed = "http://nexus.example.com/service/local/feeds/recentlyDeployedArtifacts"
   feed = feedparser.parse(nexus_feed)
 
   artifacts = map(lambda i: Artifact(string.split(i.title, ":"), i.link), feed['items'])
   filtered = filter(lambda a: a.groupId == selected.groupId and a.artifactId == selected.artifactId, artifacts)
-
+  if (selected.version != None):
+    filtered = filter(lambda a: a.version == selected.version, filtered)
 
   if len(filtered) > 1:
-    filtered[0].download(options.get('-f'))
+    filtered[0].download(options.get('-w'), options.get('-f'))
     sys.exit(0)
   else:
     print "No interesting artifacts found"
@@ -86,10 +114,11 @@ def main(args = None):
 
 def usage():
   print """
-   Usage;
+   Usage:
    download-artifact <options> <arguments>
    options:
      -f --file=<filename>
+     -w --work-dir=<work-dir>
      
    arguments:
     <groupId>
