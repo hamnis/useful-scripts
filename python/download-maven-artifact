@@ -1,0 +1,140 @@
+from lxml import etree
+from urllib2 import Request, urlopen, URLError, HTTPError
+import os.path
+import hashlib
+
+
+class Artifact:
+  def __init__(self, groupId, artifactId, version, classifier = None, extension = None):
+    self.groupId = groupId
+    self.artifactId = artifactId
+    self.version = version
+    self.classifier = classifier
+    if extension == None:
+      self.extension = "jar"
+    else:
+      self.extension = extension
+
+  def isSnapshot(self):    
+    return self.version.endswith("SNAPSHOT")
+
+  def path(self, withVersion = True):
+    base = self.groupId.replace(".", "/") + "/" + self.artifactId
+    if (withVersion):
+      return base + "/" + self.version
+    else:
+      return base
+
+  def getFilename(self, filename = None):
+    if filename == None:
+      filename = self.artifactId + "." + self.extension
+    return filename
+
+  def toString(self):    
+    if self.classifier != None:
+      return "%s:%s:%s:%s:%s" % (self.groupId, self.artifactId, self.extension, self.classifier, self.version)
+    elif self.extension != "jar":
+      return "%s:%s:%s:%s" % (self.groupId, self.artifactId, self.extension, self.version)
+    else:
+      return "%s:%s:%s" % (self.groupId, self.artifactId, self.version)
+
+
+class MavenDownloader:
+
+  def __init__(self, base = "http://repo1.maven.org/maven2"):
+    if base.endswith("/"):
+      base = base.rstrip("/")
+    self.base = base
+    self.userAgent = "Maven Artifact Downloader/1.0"
+ 
+  def findLatestVersionAvailable(self, artifact):
+    path = "/%s/maven-metadata.xml" % (artifact.path(False))
+    xml = self._request(self.base + path, "Failed to download maven-metadata.xml", lambda r: etree.parse(r))
+    v = xml.xpath("/metadata/versioning/versions/version[last()]/text()")
+    if v:
+      return v[0]      
+
+  def getURLForArtifact(self, artifact):    
+    if artifact.isSnapshot():      
+      path = "/%s/maven-metadata.xml" % (artifact.path())
+      xml = self._request(self.base + path, "Failed to download maven-metadata.xml", lambda r: etree.parse(r))
+      basexpath = "/metadata/versioning/"      
+      p = xml.xpath(basexpath + "/snapshotVersions/snapshotVersion")
+      if p:
+        return self._findMatchingArtifact(p, artifact)
+    else:      
+      return self._uriForArtifact(artifact)
+  
+  def _findMatchingArtifact(self, elems, artifact):
+    filtered = filter(lambda e: e.xpath("extension/text() = '%s'" % artifact.extension) , elems)
+    if artifact.classifier != None:
+      filtered = filter(lambda e: e.xpath("classifier/text() = '%s'" % artifact.classifier) , elems)
+    
+    if len(filtered) > 1:
+      print("There was more than one match. Selecting the first one. Try adding a classifier to get a better match.")
+    elif len(filtered) == 0:
+      print("There were no matches.")
+      return None
+
+    elem = filtered[0]
+    value = elem.xpath("value/text()")  
+    return self._uriForArtifact(artifact, value[0])
+
+  def _uriForArtifact(self, artifact, version = None):
+    if artifact.isSnapshot() and version == None:      
+        raise ValueError("Expected uniqueversion for snapshot artifact " + artifact.toString())
+    elif not artifact.isSnapshot():
+      version = artifact.version
+    return self.base  + "/" + artifact.path() + "/" +  artifact.artifactId + "-" + version + "." + artifact.extension
+
+  def _request(self, url, failmsg, f):
+    headers = {"User-Agent" : self.userAgent}
+    req = Request(url, None, headers)
+    try:
+      response = urlopen(req)
+    except HTTPError, e:
+      print(failmsg + " because of " + str(e))
+      print("Tried url " + url)
+    except URLError, e:
+      print(failmsg + " because of " + str(e))
+      print("Tried url " + url)
+    else:
+      return f(response)
+    
+
+  def download(self, artifact, filename = None):
+    filename = artifact.getFilename(filename)
+    if not artifact.version:
+      artifact = Artifact(artifact.groupId, artifact.artifactId, self.findLatestVersionAvailable(artifact), artifact.classifier, artifact.extension)
+    
+    url = self.getURLForArtifact(artifact)    
+    if not self.verifyMD5(filename, url + ".md5"):
+      print("Downloading artifact " + artifact.toString())
+      response = self._request(url, "Failed to download artifact " + artifact.toString(), lambda r: r)
+      if response:
+        with open(filename, 'w') as f:      
+          f.write(response.read())
+        print("Downloaded artifact %s to %s" % (artifact.toString(), filename))      
+    else:
+      print("%s is already up to date" % artifact.toString())
+      
+
+  def verifyMD5(self, file, remoteMD5):
+    if not os.path.exists(file):
+      return False
+    else:
+      localMD5 = self.localMD5(file)
+      remote = self._request(remoteMD5, "Failed to download MD5", lambda r: r.read())  
+      return localMD5 == remote
+
+  def localMD5(self, file):
+    md5 = hashlib.md5()
+    with open(file,'rb') as f: 
+      for chunk in iter(lambda: f.read(8192), ''): 
+        md5.update(chunk)
+    return md5.hexdigest()
+
+if __name__ == '__main__':  
+  a = Artifact("org.apache.solr", "solr", None, None, "war")  
+  m = MavenDownloader()
+  m.download(a) 
