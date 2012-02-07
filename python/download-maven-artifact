@@ -9,7 +9,7 @@ import getopt
 
 __doc__ = """
    Usage:
-   %s <options> Maven-Coordinate filename
+   %(program_name)s <options> Maven-Coordinate filename
    Options:
      -m <url> --maven-server=<url>     
      
@@ -21,7 +21,7 @@ __doc__ = """
     filename is optional. If not supplied the filename will be <artifactId>.<extension>
 
    Example:
-     %s "org.apache.solr:solr:war:3.5.0"
+     %(program_name)s "org.apache.solr:solr:war:3.5.0"
   """
 
 
@@ -46,18 +46,18 @@ class Artifact(object):
 
     def path(self, with_version=True):
         base = self.group_id.replace(".", "/") + "/" + self.artifact_id
-        if (with_version):
+        if with_version:
             return base + "/" + self.version
         else:
             return base
 
     def get_filename(self, filename=None):
-        if filename == None:
+        if not filename:
             filename = self.artifact_id + "." + self.extension
         return filename
 
     def __str__(self):
-        if self.classifier != None:
+        if self.classifier:
             return "%s:%s:%s:%s:%s" % (self.group_id, self.artifact_id, self.extension, self.classifier, self.version)
         elif self.extension != "jar":
             return "%s:%s:%s:%s" % (self.group_id, self.artifact_id, self.extension, self.version)
@@ -110,13 +110,13 @@ class MavenDownloader:
 
     def _find_matching_artifact(self, elems, artifact):
         filtered = filter(lambda e: e.xpath("extension/text() = '%s'" % artifact.extension), elems)
-        if artifact.classifier != None:
+        if artifact.classifier:
             filtered = filter(lambda e: e.xpath("classifier/text() = '%s'" % artifact.classifier), elems)
 
         if len(filtered) > 1:
             print(
             "There was more than one match. Selecting the first one. Try adding a classifier to get a better match.")
-        elif len(filtered) == 0:
+        elif not len(filtered):
             print("There were no matches.")
             return None
 
@@ -125,7 +125,7 @@ class MavenDownloader:
         return self._uri_for_artifact(artifact, value[0])
 
     def _uri_for_artifact(self, artifact, version=None):
-        if artifact.is_snapshot() and version == None:
+        if artifact.is_snapshot() and not version:
             raise ValueError("Expected uniqueversion for snapshot artifact " + str(artifact))
         elif not artifact.is_snapshot():
             version = artifact.version
@@ -149,7 +149,7 @@ class MavenDownloader:
     def download(self, artifact, filename=None):
         filename = artifact.get_filename(filename)
         if not artifact.version:
-            artifact = Artifact(artifact.groupId, artifact.artifactId, self.find_latest_version_available(artifact),
+            artifact = Artifact(artifact.groupId, artifact.artifactId, self._find_latest_version_available(artifact),
                 artifact.classifier, artifact.extension)
 
         url = self.find_uri_for_artifact(artifact)
@@ -158,7 +158,8 @@ class MavenDownloader:
             response = self._request(url, "Failed to download artifact " + str(artifact), lambda r: r)
             if response:
                 with open(filename, 'w') as f:
-                    f.write(response.read())
+                    #f.write(response.read())
+                    self._write_chunks(response, f, report_hook=self.chunk_report)
                 print("Downloaded artifact %s to %s" % (artifact, filename))
                 return True
             else:
@@ -167,16 +168,42 @@ class MavenDownloader:
             print("%s is already up to date" % artifact)
             return True
 
+    def chunk_report(self, bytes_so_far, chunk_size, total_size):
+        percent = float(bytes_so_far) / total_size
+        percent = round(percent*100, 2)
+        sys.stdout.write("Downloaded %d of %d bytes (%0.2f%%)\r" %
+                 (bytes_so_far, total_size, percent))
+
+        if bytes_so_far >= total_size:
+            sys.stdout.write('\n')
+
+    def _write_chunks(self, response, file, chunk_size=8192, report_hook=None):
+        total_size = response.info().getheader('Content-Length').strip()
+        total_size = int(total_size)
+        bytes_so_far = 0
+
+        while 1:
+            chunk = response.read(chunk_size)
+            bytes_so_far += len(chunk)
+
+            if not chunk:
+                break
+
+            file.write(chunk)
+            if report_hook:
+                report_hook(bytes_so_far, chunk_size, total_size)
+
+        return bytes_so_far
 
     def verify_md5(self, file, remote_md5):
         if not os.path.exists(file):
             return False
         else:
-            localMD5 = self.localMD5(file)
-            remote = self._request(remoteMD5, "Failed to download MD5", lambda r: r.read())
-            return localMD5 == remote
+            local_md5 = self._local_md5(file)
+            remote = self._request(remote_md5, "Failed to download MD5", lambda r: r.read())
+            return local_md5 == remote
 
-    def local_md5(self, file):
+    def _local_md5(self, file):
         md5 = hashlib.md5()
         with open(file, 'rb') as f:
             for chunk in iter(lambda: f.read(8192), ''):
@@ -193,7 +220,7 @@ def main():
         usage()
         sys.exit(2)
 
-    if len(args) == 0:
+    if not len(args):
         print "No maven coordiantes supplied"
         usage()
         sys.exit(2)
@@ -220,8 +247,7 @@ def main():
 
 
 def usage():
-    basename = os.path.basename(sys.argv[0])
-    print(__doc__ % (basename, basename))
+    print(__doc__ % {'program_name': os.path.basename(sys.argv[0])})
 
 if __name__ == '__main__':
     main()
