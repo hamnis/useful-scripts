@@ -53,7 +53,10 @@ class Artifact(object):
 
     def get_filename(self, filename=None):
         if not filename:
-            filename = self.artifact_id + "." + self.extension
+            if not self.classifier:
+                filename = self.artifact_id + "." + self.extension
+            else:
+                filename = self.artifact_id + "-" + self.classifier + "." + self.extension
         return filename
 
     def __str__(self):
@@ -76,8 +79,8 @@ class Artifact(object):
             if len(parts) == 4:
                 t = parts[2]
             if len(parts) == 5:
-                c = parts(2)
-                t = parts(3)
+                t = parts[2]
+                c = parts[3]
             return Artifact(g, a, v, c, t)
         else:
             return None
@@ -129,6 +132,8 @@ class MavenDownloader:
             raise ValueError("Expected uniqueversion for snapshot artifact " + str(artifact))
         elif not artifact.is_snapshot():
             version = artifact.version
+        if artifact.classifier:
+            return self.base + "/" + artifact.path() + "/" + artifact.artifact_id + "-" + version + "-" + artifact.classifier + "." + artifact.extension
         return self.base + "/" + artifact.path() + "/" + artifact.artifact_id + "-" + version + "." + artifact.extension
 
     def _request(self, url, failmsg, f):
