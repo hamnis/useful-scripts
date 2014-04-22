@@ -51,12 +51,17 @@ class Artifact(object):
         else:
             return base
 
+    def _generate_filename(self):
+        if not self.classifier:
+            return self.artifact_id + "." + self.extension
+        else:
+            return self.artifact_id + "-" + self.classifier + "." + self.extension
+
     def get_filename(self, filename=None):
         if not filename:
-            if not self.classifier:
-                filename = self.artifact_id + "." + self.extension
-            else:
-                filename = self.artifact_id + "-" + self.classifier + "." + self.extension
+            filename = self._generate_filename()
+        elif os.path.isdir(filename):
+            filename = os.path.join(filename, self._generate_filename())
         return filename
 
     def __str__(self):
